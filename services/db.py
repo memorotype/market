@@ -1,3 +1,24 @@
+GERMAN_FOOD_MAP = {
+    "domates": "Tomaten",
+    "çeri domates": "Cherrytomaten",
+    "cherry domates": "Cherrytomaten",
+    "kiraz domates": "Cherrytomaten",
+    "salatalık": "Gurke",
+    "hıyar": "Gurke",
+    "biber": "Paprika",
+    "patates": "Kartoffeln",
+    "soğan": "Zwiebeln",
+    "elma": "Apfel",
+    "armut": "Birne",
+    "süt": "Milch",
+    "yoğurt": "Joghurt",
+    "peynir": "Käse",
+    "ekmek": "Brot",
+    "yumurta": "Eier",
+    "et": "Fleisch",
+    "kıyma": "Hackfleisch",
+}
+
 from services.supabase_client import get_client
 from services.images import fetch_google_image
 
