@@ -31,10 +31,19 @@ with st.form("add_form"):
 if submit and text.strip() and household_code.strip():
     tr_label = text if user_lang=="tr" else None
     ru_label = text if user_lang=="ru" else None
-    concept = upsert_concept_with_labels(tr_label=tr_label, ru_label=ru_label, de_label=None)
+
+    # DE etiketi otomatik oluştur (Google görseli için önemli!)
+    de_label = tr_label if tr_label else ru_label
+
+    concept = upsert_concept_with_labels(
+        tr_label=tr_label,
+        ru_label=ru_label,
+        de_label=de_label
+    )
+
     add_item(household_code, concept["id"], qty or None, unit or None, note or None)
     st.success("Eklendi ✔")
-    st.rerun()
+    st.rerun()   # DÜZELTME
 
 # Listeyi yükle
 active, history = fetch_active_and_history(household_code)
@@ -64,11 +73,11 @@ def render_row(item):
         if not item["moved_to_history"]:
             if st.button("✓ Sepete", key=f"done_{item['id']}"):
                 mark_done(item["id"])
-                st.rerun()
+                st.rerun()   # DÜZELTME
         else:
             if st.button("↩ Geri Al", key=f"undo_{item['id']}"):
                 undo_item(item["id"])
-                st.rerun()
+                st.rerun()   # DÜZELTME
 
 # Alınacaklar
 st.subheader("🧾 " + ui["todo"])
