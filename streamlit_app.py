@@ -64,7 +64,7 @@ def render_row(item):
         if not item["moved_to_history"]:
             if st.button("✓ Sepete", key=f"done_{item['id']}"):
                 mark_done(item["id"])
-                st.experimental_rerun()
+                st.rerun()
         else:
             if st.button("↩ Geri Al", key=f"undo_{item['id']}"):
                 undo_item(item["id"])
