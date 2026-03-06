@@ -34,7 +34,7 @@ if submit and text.strip() and household_code.strip():
     concept = upsert_concept_with_labels(tr_label=tr_label, ru_label=ru_label, de_label=None)
     add_item(household_code, concept["id"], qty or None, unit or None, note or None)
     st.success("Eklendi ✔")
-    st.experimental_rerun()
+    st.rerun()
 
 # Listeyi yükle
 active, history = fetch_active_and_history(household_code)
@@ -68,7 +68,7 @@ def render_row(item):
         else:
             if st.button("↩ Geri Al", key=f"undo_{item['id']}"):
                 undo_item(item["id"])
-                st.experimental_rerun()
+                st.rerun()
 
 # Alınacaklar
 st.subheader("🧾 " + ui["todo"])
