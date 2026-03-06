@@ -1,92 +1,144 @@
-import streamlit as st
-from services.db import (
-    upsert_concept_with_labels, get_labels, add_item,
-    mark_done, undo_item, fetch_active_and_history,
-    concept_by_id
-)
-from core.i18n import UI_TEXT
+from .supabase_client import get_client
+from .images import fetch_google_image
 
-st.set_page_config(page_title="Alışveriş Listesi", page_icon="🛒", layout="wide")
+def _ensure_label(sb, concept_id: str, lang: str, label: str | None):
+    """product_labels tablosunda (concept_id, lang) yoksa ekler; varsa dokunmaz."""
+    if not label:
+        return
+    rows = sb.table("product_labels").select("*") \
+        .eq("concept_id", concept_id).eq("lang", lang).execute().data
+    if not rows:
+        sb.table("product_labels").insert({
+            "concept_id": concept_id,
+            "lang": lang,
+            "label": label,
+            "synonyms": []
+        }).execute()
 
-st.title("🛒 Ortak Alışveriş Listesi — TR / DE / RU")
+def upsert_concept_with_labels(tr_label=None, ru_label=None, de_label=None):
+    """
+    1) Herhangi bir dil etiketinden kavramı bul.
+    2) Bulunursa: eksik olan TR/RU/DE etiketlerini ekle (backfill).
+       image_url boşsa DE (yoksa TR/RU) ile bir kere görsel çek.
+    3) Bulunamazsa: yeni kavram + mevcut dil etiketlerini oluştur.
+       DE etiketi yoksa TR ya da RU'yu geçici DE olarak kullan (görsel için).
+    """
+    sb = get_client()
 
-# Sidebar ayarları
-with st.sidebar:
-    st.header("Ayarlar")
-    user_lang = st.selectbox("Dil", ["tr","ru"], index=0)
-    household_code = st.text_input("Hane Kodu", value="bizim-ev")
-    st.caption("Aynı hane kodunu eşin de girerse aynı listeyi görür.")
+    # 1) Mevcut kavram var mı? (etiket araması)
+    for lang, lbl in (("tr", tr_label), ("ru", ru_label), ("de", de_label)):
+        if not lbl:
+            continue
+        found = sb.table("product_labels").select("*") \
+            .eq("lang", lang).eq("label", lbl).execute().data
+        if found:
+            concept_id = found[0]["concept_id"]
+            concept = sb.table("product_concepts").select("*") \
+                .eq("id", concept_id).execute().data[0]
 
-ui = UI_TEXT[user_lang]
+            # 2) Eksik etiketleri tamamla
+            _ensure_label(sb, concept_id, "tr", tr_label)
+            _ensure_label(sb, concept_id, "ru", ru_label)
+            # DE etiketi yoksa TR/RU'dan biriyle geçici doldur (görsel için)
+            de_fallback = de_label or tr_label or ru_label
+            _ensure_label(sb, concept_id, "de", de_fallback)
 
-st.subheader(ui["add_item"])
+            # Görsel yoksa bir kez çek
+            if not concept.get("image_url"):
+                q = de_label or de_fallback
+                if q:
+                    img = fetch_google_image(f"{q} Lebensmittel Deutschland")
+                    if img:
+                        sb.table("product_concepts").update({
+                            "image_url": img,
+                            "image_source": "google"
+                        }).eq("id", concept_id).execute()
+                        concept["image_url"] = img
 
-with st.form("add_form"):
-    text = st.text_input("Ürün adı (TR veya RU)")
-    qty  = st.text_input(ui["qty"])
-    unit = st.selectbox(ui["unit"], ["adet","paket","kg","g","L","ml","—"])
-    note = st.text_input(ui["note"])
-    submit = st.form_submit_button("Ekle")
+            # Güncellenmiş kavramı geri döndür
+            concept = sb.table("product_concepts").select("*") \
+                .eq("id", concept_id).execute().data[0]
+            return concept
 
-if submit and text.strip() and household_code.strip():
-    tr_label = text if user_lang=="tr" else None
-    ru_label = text if user_lang=="ru" else None
+    # 3) Hiç bulunamadıysa: yeni kavram oluştur
+    concept = sb.table("product_concepts").insert({"category": None}).execute().data[0]
+    cid = concept["id"]
 
-    # DE etiketi otomatik oluştur (Google görseli için önemli!)
-    de_label = tr_label if tr_label else ru_label
+    # Etiketleri yaz
+    if tr_label:
+        sb.table("product_labels").insert({"concept_id": cid, "lang":"tr", "label": tr_label}).execute()
+    if ru_label:
+        sb.table("product_labels").insert({"concept_id": cid, "lang":"ru", "label": ru_label}).execute()
 
-    concept = upsert_concept_with_labels(
-        tr_label=tr_label,
-        ru_label=ru_label,
-        de_label=de_label
-    )
+    # DE etiketi yoksa geçici üret (TR veya RU)
+    de_fallback = de_label or tr_label or ru_label
+    if de_fallback:
+        sb.table("product_labels").insert({"concept_id": cid, "lang":"de", "label": de_fallback}).execute()
 
-    add_item(household_code, concept["id"], qty or None, unit or None, note or None)
-    st.success("Eklendi ✔")
-    st.rerun()   # DÜZELTME
-
-# Listeyi yükle
-active, history = fetch_active_and_history(household_code)
-
-def render_row(item):
-    c = concept_by_id(item["concept_id"])
-    labels = get_labels(item["concept_id"])
-    img = c.get("image_url")
-
-    col = st.columns([0.15, 0.45, 0.4])
-
-    with col[0]:
+    # Görsel bir kez çek
+    if de_fallback:
+        img = fetch_google_image(f"{de_fallback} Lebensmittel Deutschland")
         if img:
-            st.image(img, width=60)
-        else:
-            st.write("—")
+            sb.table("product_concepts").update({
+                "image_url": img,
+                "image_source": "google"
+            }).eq("id", cid).execute()
+            concept["image_url"] = img
 
-    with col[1]:
-        st.write(f"**TR:** {labels.get('tr') or '—'}")
-        st.write(f"**DE:** {labels.get('de') or '—'}")
+    return concept
 
-    with col[2]:
-        st.write(f"**RU:** {labels.get('ru') or '—'}")
-        st.write(f"{item.get('qty') or ''} {item.get('unit') or ''}")
-        st.write(f"_{item.get('note') or ''}_")
+def get_labels(concept_id: str):
+    sb = get_client()
+    rows = sb.table("product_labels").select("*").eq("concept_id", concept_id).execute().data
+    labels = {"tr":None,"ru":None,"de":None}
+    for r in rows:
+        labels[r["lang"]] = r["label"]
+    return labels
 
-        if not item["moved_to_history"]:
-            if st.button("✓ Sepete", key=f"done_{item['id']}"):
-                mark_done(item["id"])
-                st.rerun()   # DÜZELTME
-        else:
-            if st.button("↩ Geri Al", key=f"undo_{item['id']}"):
-                undo_item(item["id"])
-                st.rerun()   # DÜZELTME
+def add_item(household_code: str, concept_id: str, qty=None, unit=None, note=None):
+    sb = get_client()
+    return sb.table("list_items").insert({
+        "household_code": household_code,
+        "concept_id": concept_id,
+        "qty": qty,
+        "unit": unit,
+        "note": note
+    }).execute()
 
-# Alınacaklar
-st.subheader("🧾 " + ui["todo"])
-for it in active:
-    render_row(it)
+def mark_done(item_id: str):
+    sb = get_client()
+    return sb.table("list_items").update({
+        "is_done": True,
+        "moved_to_history": True,
+        "moved_at": "now()"
+    }).eq("id", item_id).execute()
 
-st.markdown("---")
+def undo_item(item_id: str):
+    sb = get_client()
+    return sb.table("list_items").update({
+        "is_done": False,
+        "moved_to_history": False,
+        "moved_at": None
+    }).eq("id", item_id).execute()
 
-# Son alınanlar — listenin ALTINDA
-st.subheader("🕘 " + ui["history"])
-for it in history:
-    render_row(it)
+def fetch_active_and_history(household_code: str):
+    sb = get_client()
+
+    active = sb.table("list_items").select("*") \
+        .eq("household_code", household_code) \
+        .eq("moved_to_history", False) \
+        .order("created_at") \
+        .execute().data
+
+    history = sb.table("list_items").select("*") \
+        .eq("household_code", household_code) \
+        .eq("moved_to_history", True) \
+        .order("moved_at", desc=True) \
+        .execute().data
+
+    return active, history
+
+def concept_by_id(concept_id: str):
+    sb = get_client()
+    data = sb.table("product_concepts").select("*").eq("id", concept_id).execute().data
+    return data[0] if data else None
