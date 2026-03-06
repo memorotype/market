@@ -1,5 +1,5 @@
 from .supabase_client import get_client
-from .images import fetch_google_image
+from services.images import fetch_google_image
 
 def upsert_concept_with_labels(tr_label=None, ru_label=None, de_label=None):
     sb = get_client()
